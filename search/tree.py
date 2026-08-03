@@ -12,8 +12,8 @@ class NodeType(Enum):
 @dataclass
 class Node:
     node_type: NodeType
-    value: Optional[float] = None  # only leaves have values
-    children: list[Node] = field(default_factory=list)   # =[] shares one list across all instances
+    value: Optional[float] = None # only leaves have values
+    children: list[Node] = field(default_factory=list) # =[] shares one list across all instances
 
 @dataclass
 class TreeParams:

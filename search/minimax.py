@@ -5,7 +5,7 @@ from .tree import Node, NodeType, Tree
 class MinimaxResult:
     best_move: int
     best_value: float
-    second_best_value: float  # gap to second best (is_contested and margin_category)
+    second_best_value: float # gap to second best (is_contested and margin_category)
     move_values: list[float]
     nodes_visited: int
 
