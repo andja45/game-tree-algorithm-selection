@@ -46,11 +46,6 @@ class AlphaBeta:
         if node.node_type == NodeType.LEAF or depth == 0:
             return node.value if node.value is not None else 0.0
 
-        if node.node_type == NodeType.CHANCE:
-            # we must visit all children to compute mean - pruning isnt possible
-            child_values = [self._max(child, depth - 1, alpha, beta) for child in node.children]
-            return sum(child_values) / len(child_values)
-
         a = float("-inf")
         for child in node.children:
             b = self._min(child, depth - 1, alpha, beta)
@@ -69,10 +64,6 @@ class AlphaBeta:
 
         if node.node_type == NodeType.LEAF or depth == 0:
             return node.value if node.value is not None else 0.0
-
-        if node.node_type == NodeType.CHANCE:
-            child_values = [self._min(child, depth - 1, alpha, beta) for child in node.children]
-            return sum(child_values) / len(child_values)
 
         b = float("inf")
         for child in node.children:
