@@ -1,3 +1,4 @@
+from __future__ import annotations
 import math
 import random
 import time
@@ -24,7 +25,6 @@ class MCTSResult:
     search_time: float
 
 class MCTS:
-
     def __init__(self, iterations: int, c: float = math.sqrt(2)):
         self.iterations = iterations
         self.c = c # exploration constant in UCB1, sqrt(2) is theoretically optimal
@@ -39,7 +39,7 @@ class MCTS:
             value = self._rollout(node)
             self._backprop(node, value)
 
-        # most visits, not highest average - visit count is more robust
+        # visit count is more robust than highest average
         visit_counts = [child.visits for child in root.children]
         best_move = visit_counts.index(max(visit_counts))
 
@@ -52,7 +52,11 @@ class MCTS:
 
     def _select(self, node: _MCTSNode) -> _MCTSNode:
         while node.is_fully_expanded() and node.children:
-            node = max(node.children, key=self._ucb1)
+            if node.game_node.node_type == NodeType.CHANCE:
+                # chance nodes are random, we assume uniform probability
+                node = random.choice(node.children)
+            else:
+                node = max(node.children, key=self._ucb1)
         return node
 
     def _expand(self, node: _MCTSNode) -> _MCTSNode:
@@ -87,6 +91,8 @@ class MCTS:
             return float("inf")
         parent_visits = node.parent.visits if node.parent else node.visits
         exploitation = node.total_value / node.visits
+        if node.parent and node.parent.game_node.node_type == NodeType.MIN:
+            exploitation = -exploitation
         exploration = self.c * math.sqrt(math.log(parent_visits) / node.visits)
         return exploitation + exploration
 

@@ -6,8 +6,9 @@ from .tree import Node, NodeType, Tree
 class ExpectimaxResult:
     best_move: int
     best_value: float
+    move_values: list[float]
     nodes_visited: int
-    chance_nodes_visited: int 
+    chance_nodes_visited: int
     depth_reached: int
     search_time: float
 
@@ -31,6 +32,7 @@ class Expectimax:
         return ExpectimaxResult(
             best_move=best_move,
             best_value=move_values[best_move],
+            move_values=move_values,
             nodes_visited=self._nodes_visited,
             chance_nodes_visited=self._chance_nodes_visited,
             depth_reached=self._max_depth_reached,

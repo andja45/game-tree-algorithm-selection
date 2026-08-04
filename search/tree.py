@@ -20,9 +20,7 @@ class TreeParams:
     branching_factor: int
     depth: int
     chance_node_density: float
-    deceptiveness_score: float
     evaluation_noise: float
-    reward_concentration: float
     tree_balance: float
 
 @dataclass

@@ -6,9 +6,10 @@ from .tree import Node, NodeType, Tree
 class AlphaBetaResult:
     best_move: int
     best_value: float
+    move_values: list[float]
     nodes_visited: int
     pruning_count: int
-    pruning_rate: float # pruning_count / nodes_visited 
+    pruning_rate: float # pruning_count / nodes_visited
     depth_reached: int
     search_time: float
 
@@ -23,7 +24,7 @@ class AlphaBeta:
         start = time.time()
 
         move_values = [
-            self._max(child, self.depth_limit - 1, float("-inf"), float("inf"))
+            self._min(child, self.depth_limit - 1, float("-inf"), float("inf"))
             for child in tree.root.children
         ]
 
@@ -32,6 +33,7 @@ class AlphaBeta:
         return AlphaBetaResult(
             best_move=best_move,
             best_value=move_values[best_move],
+            move_values=move_values,
             nodes_visited=self._nodes_visited,
             pruning_count=self._pruning_count,
             pruning_rate=self._pruning_count / max(self._nodes_visited, 1),
