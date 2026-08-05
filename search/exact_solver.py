@@ -63,7 +63,7 @@ class Minimax:
             elif current.node_type == NodeType.MIN:
                 min_count += 1
                 current = current.children[child_vals.index(min(child_vals))]
-            else:  # CHANCE — trace toward child closest to expected value
+            else: # CHANCE has no optimal child - closest-to-mean as most representative path
                 chance_count += 1
                 expected = sum(child_vals) / len(child_vals)
                 distances = [abs(v - expected) for v in child_vals]
