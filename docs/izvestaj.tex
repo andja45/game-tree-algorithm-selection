@@ -1,0 +1,1061 @@
+\documentclass[12pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[serbian]{babel}
+\usepackage[left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{enumitem}
+% microtype disabled: font expansion not available in this environment
+\usepackage{parskip}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    urlcolor=blue,
+    citecolor=black
+}
+
+\setlength{\parskip}{6pt}
+\setlength{\parindent}{0pt}
+
+\title{
+    \textbf{Selekcija algoritma pretrage stabla igre}\\[0.4em]
+    \large Istraživanje podataka 2: Seminarski rad\\[0.3em]
+    \normalsize Primena klasifikacije na problem selekcije algoritma (Rice, 1976)
+}
+\author{Anđela Spasić}
+\date{Matematički fakultet, Univerzitet u Beogradu\\2025/2026}
+
+\begin{document}
+
+\maketitle
+\newpage
+\tableofcontents
+\newpage
+
+%-------------------------------------------------------------------
+\section{Tekst zadatka}
+%-------------------------------------------------------------------
+
+Zadatak je primeniti metode istraživanja podataka na sopstveni sintetički skup stabala igre,
+sa ciljem da se predvidi koji od dva algoritma pretrage, Alpha-Beta (AB) ili Monte Carlo Tree
+Search (MCTS), daje bolji rezultat na datom stablu, pod ograničenim budžetom pretrage
+(brojem čvorova koje algoritam sme da poseti).
+
+Problem se formalizuje kao instanca \textit{problema selekcije algoritma} (Rice, 1976). Kao mera selekcije, u ovom radu koriste se dva glavna cilja klasifikacije
+nad istim skupom:
+
+\begin{itemize}[noitemsep]
+    \item \texttt{which\_algo}: da li je algoritam $a$ pronašao globalno optimalan
+    prvi potez na stablu $x$, prema iscrpnom minimax rešavaču;
+    \item \texttt{which\_better}: čiji je od dva izabrana poteza (AB-ovog ili
+    MCTS-ovog) vrednosno bolji, nezavisno od toga da li je bilo koji od njih zaista optimalan.
+\end{itemize}
+
+Cilj je naučiti model da predviđa
+koji algoritam će dati bolji rezultat, pre nego što se ijedan od njih pokrene.
+
+Optimalni potez i tačne vrednosti poteza definišu se iscrpnim minimax pretraživanjem koje
+poseti svaki čvor stabla. Ovakvo pretraživanje je izvodljivo samo na sintetičkim stablima
+kontrolisane veličine, pa se stabla generišu programski, upravo da bi iscrpni minimax mogao
+da posluži za obeležavanje, tako da AB i MCTS imaju sa čime da se porede.
+
+Seminarski rad obuhvata:
+\begin{itemize}[noitemsep]
+    \item generisani sintetički skup podataka (16\,978 stabala, 91 atribut, od čega 81
+    prediktorski i 10 ciljnih/izvedenih)
+    \item pretprocesiranje podataka
+    \item klasifikaciju sa sedam algoritama i poređenje na tri skupa atributa (svi, strukturni,
+    redukovani)
+    \item vizualizaciju podataka u 2D prostoru (PCA, t-SNE)
+    \item modele za više ciljnih promenljivih (\texttt{which\_better}, \texttt{which\_algo},
+    \texttt{ab\_correct}, \texttt{mcts\_correct}, \texttt{margin\_category},
+    \texttt{tree\_difficulty})
+    \item tekstualni opis i tumačenje rezultata
+\end{itemize}
+
+%-------------------------------------------------------------------
+\section{Opis skupa podataka}
+%-------------------------------------------------------------------
+
+\subsection{Generisanje stabala}
+
+Svako stablo se gradi rekurzivno počev od korena. Vrednost svakog čvora živi u
+neograničenom prostoru i predstavlja slučajni hod: dete nasleđuje vrednost roditelja uz mali Gausov pomak,
+\[
+\ell_{\text{dete}} = \ell_{\text{roditelj}} + \mathcal{N}(0, \sigma^2), \qquad
+\sigma = \frac{\mathit{spread}}{\sqrt{\mathit{max\_depth}}},
+\]
+gde \textit{spread} kontroliše koliko brzo se vrednosti grana razilaze od korena ka listovima.
+Nakon toga se vrednost projektuje u interval $[-1, 1]$ preko $\tanh$: list
+dobija pravu vrednost $v = \tanh(\ell)$, a svaki unutrašnji čvor dobija \textit{heurističku}
+vrednost $\tanh(\ell + \mathcal{N}(0, (\mathit{heur\_noise} \cdot r)^2))$, gde je $r$ udeo
+preostale dubine do lista. Heuristika je namerno nepouzdanija bliže korenu, gde AB najčešće
+mora da je koristi jer budžet ne dopire do pravih listova.
+
+\textbf{Tipovi čvorova.} Koren uvek ima bar dva deteta (da postoji stvaran izbor poteza).
+Svaki unutrašnji čvor je jedan od:
+\begin{itemize}[noitemsep]
+    \item \textsc{Max}: vrednost = $\max$ dece (naizmenično sa \textsc{Min} po parnosti dubine)
+    \item \textsc{Min}: vrednost = $\min$ dece
+    \item \textsc{Chance}: slučajni događaj, vrednost = $\text{mean}$ dece; javlja se na
+    bilo kojoj dubini $> 0$ sa verovatnoćom \textit{chance\_density}, koja je za 15\% stabala
+    tačno $0.0$ (potpuno deterministička stabla), a inače uniformno izvučena iz $[0, 0.9]$
+    \item \textsc{Leaf}: terminalni čvor
+\end{itemize}
+Broj dece po čvoru je Gausov uzorak oko faktora grananja koji je jedan od parametara generisanja, a dodatno određeni broj čvorova (van korena)
+postaje list pre dostizanja maksimalne dubine, čime stabla postaju nepravilna umesto savršeno
+balansirana. Maksimalna dubina se bira tako da \textit{očekivani} broj čvorova ne pređe 30\,000, sa apsolutnim maksimumom od 10 nivoa. Kako se stvarni broj
+dece po čvoru izvlači iz Gausove raspodele, a ne fiksira na tu procenu, realizovano stablo
+može znatno odstupiti u oba pravca, otuda u konačnom skupu ima stabala i sa svega stotinak i
+sa preko 50\,000 čvorova.
+
+\textbf{Algoritmi.}
+\begin{itemize}[noitemsep]
+    \item \textbf{Minimax} (tačni rešavač): iscrpna rekurzija bez ograničenja budžeta ili dubine.
+    Uvek tačan po definiciji; služi isključivo za obeležavanje.
+    \item \textbf{Alpha-Beta} (AB): iterativno produbljivanje, pretražuje na dubini 1, pa 2,
+    itd., dok budžet čvorova ne bude na izmaku; zadržava se vrednosti poteza sa poslednje
+    potpuno završene dubine. AB nigde ne čita tip čvora, nego alternira
+    $\max$/$\min$ isključivo po parnosti dubine poziva, pa \textsc{Chance} čvorove tretira kao
+    obične \textsc{Max}/\textsc{Min} čvorove.
+    \item \textbf{MCTS} (UCT): budžet se meri brojem \textit{dodirnutih} čvorova tokom
+    selekcije, ekspanzije i rollout-a do pravog lista, odnosno
+    rollout se takođe naplaćuje iz budžeta. Pri selekciji,
+    \textsc{Chance} čvorovi se uzorkuju ravnomerno slučajno, dok se
+    \textsc{Max}/\textsc{Min} čvorovi biraju UCB1 formulom
+    $Q(k) + c\sqrt{\ln N(\text{roditelj})/N(k)}$, $c = \sqrt{2}$, sa $Q$ negiranim na
+    \textsc{Min} čvorovima. Finalni potez je dete korena sa najviše poseta.
+\end{itemize}
+
+Pošto je MCTS nasumičan, svako stablo se rešava sa 5 nezavisnih, seedovanih
+ponavljanja MCTS-a, pa je \texttt{mcts\_correct}
+definisan kao većinski glas (bar 3 od 5 tačna), a \texttt{mcts\_correct\_rate} kao kontinualan
+udeo tačnih ponavljanja. 
+
+Isti čvorni budžet, izveden kao udeo ukupnog broja čvorova stabla
+(log-uniformno iz $[0.02, 0.7]$, sa minimumom od 20), koristi se za AB i za svako MCTS
+ponavljanje, čime je poređenje pravedno: oba algoritma rade pod istim ograničenjem resursa.
+
+Generisano je $20\,000$ stabala; zadržano je $16\,978$ (ostatak je odbačen jer je imao manje
+od 80 čvorova ili manje od dva deteta korena, dakle degenerisani slučajevi bez stvarnog izbora).
+
+\subsection{Atributi}
+
+Skup ima 91 kolonu: 81 prediktorski atribut i 10 ciljnih/izvedenih promenljivih
+(\texttt{which\_algo}, \texttt{which\_better}, \texttt{margin\_category}, \texttt{ab\_correct},
+\texttt{mcts\_correct}, \texttt{mcts\_correct\_rate}, \texttt{is\_contested}, \texttt{delta},
+\texttt{ab\_regret}, \texttt{mcts\_regret}). Prediktorski atributi se dele u sedam grupa, prema
+tome da li se mogu izračunati iz same strukture stabla ili zahtevaju da neki algoritam
+(AB, MCTS ili orakl) zaista bude pokrenut:
+
+\begin{itemize}[noitemsep]
+    \item \textbf{Parametri generisanja (4):} \texttt{branching\_factor}, \texttt{depth},
+    \texttt{chance\_node\_density}, \texttt{heur\_noise\_param};
+    \item \textbf{Globalna struktura (24):} brojevi čvorova različitih tipova
+    (\texttt{total\_nodes}/\texttt{leaves}/\texttt{internal\_nodes}/\texttt{chance\_nodes}/%
+    \texttt{max\_nodes}/\texttt{min\_nodes}),
+    izvedeni odnosi 
+    
+    (\texttt{leaf\_to\_internal\_ratio}, \texttt{chance\_node\_fraction},
+    \texttt{leaf\_density}), prosek i standardno odstupanje broja dece po čvoru
+    (\texttt{branching\_mean}/\texttt{std}), ostvarena dubina lista (\texttt{realized\_max\_depth},
+    \texttt{leaf\_depth\_mean}/\texttt{std}) i deset opisnih statistika vrednosti listova
+    (\texttt{leaf\_value\_mean}/\texttt{std}/\texttt{min}/\texttt{max}/\texttt{range}/%
+    \texttt{median}, \texttt{leaf\_iqr},
+    \item \textbf{Struktura po dubini (25):} \texttt{node\_count\_d\textit{k}},
+    \texttt{chance\_node\_count\_d\textit{k}}, 
+    
+    \texttt{leaf\_value\_mean\_d\textit{k}},
+    \texttt{leaf\_value\_std\_d\textit{k}}, \texttt{branching\_mean\_d\textit{k}} za
+    $k = 1, \ldots, 5$;
+    \item \textbf{Budžet i grananje iz korena (12):} \texttt{node\_budget},
+    \texttt{budget\_coverage}, \texttt{ab\_reach\_depth} ($= \log(\mathit{budget}) /
+    \log(\mathit{bf})$, koliko nivoa dubine AB realno dostiže), \texttt{depth\_deficit},
+    \texttt{depth\_deficit\_rel}, \texttt{branch\_top2\_gap}, \texttt{branch\_mean\_spread},
+    \texttt{branch\_value\_skew}, \texttt{top2\_size\_ratio}, \texttt{top2\_depth\_diff},
+    \texttt{chance\_frac\_top1/top2}
+    \item \textbf{Kvalitet heuristike (3):} \texttt{heur\_incoherence} (i njegovo standardno
+    odstupanje \texttt{heur\_incoherence\_std}) meri koliko se heuristička vrednost čvora
+    razlikuje od one koju bi dala prava minimax/mean propagacija dece,
+    \texttt{heur\_noise\_to\_signal} poredi zadati šum heuristike sa stvarnim rasipanjem
+    vrednosti listova. Iako opisuju kvalitet evaluacione funkcije, sva tri atributa se računaju
+    direktno iz heurističkih i pravih vrednosti dodeljenih pri generisanju stabla, pa su
+    dostupni i pre pokretanja bilo kog algoritma pretrage
+    \item \textbf{Atributi ponašanja AB-a i MCTS-a (9):} merenja koja postoje samo zato
+    što je algoritam zaista pokrenut: kod AB-a \texttt{ab\_nodes\_visited},
+    \texttt{ab\_pruning\_rate}, \texttt{ab\_root\_eval\_std}, \texttt{ab\_instability},
+    \texttt{ab\_depth\_reached}, \texttt{ab\_ranking\_correlation}, kod MCTS-a
+    \texttt{mcts\_vote\_margin}, \texttt{mcts\_visit\_entropy},
+    \texttt{mcts\_best\_value\_estimate}
+    \item \textbf{Atributi tačnog rešavača (4):} tačne vrednosti iz iscrpnog minimaxa
+    (\texttt{exact\_best\_value}, \texttt{exact\_second\_best\_value},
+    \texttt{best\_move\_margin}, \texttt{best\_move\_margin\_normalized}), dostupne tek nakon
+    što se Minimax pokrene
+\end{itemize}
+
+Skup atributa po dubini pokriva prvih pet nivoa ($k=1,\ldots,5$), umesto svih nivoa do
+maksimalne dubine stabla (koja ide i do 10): dublji nivoi bi na manjim stablima gotovo uvek
+bili prazni ili nula, pa ne bi nosili stvaran signal, samo bi indirektno kodirali faktor
+grananja preko toga koliko kolona uopšte ima nenultu vrednost, što bi kvarilo generalizaciju
+
+\subsection{Ciljne promenljive}
+
+\begin{itemize}[noitemsep]
+    \item \texttt{which\_better} (nominalna, 3 klase): čiji je izabrani potez bolji,
+    \texttt{AB / MCTS / Tie}; glavni cilj;
+    \item \texttt{which\_algo} (nominalna, 4 klase): koji algoritam pronalazi optimalni potez,
+    \texttt{AB / MCTS / Both / Neither}; sporedni cilj;
+    \item \texttt{ab\_correct}, \texttt{mcts\_correct} (binarne): da li je svaki algoritam
+    pojedinačno tačan;
+    \item \texttt{mcts\_correct\_rate} (kontinualna): udeo od 5 MCTS ponavljanja koja su
+    pogodila optimum;
+    \item \texttt{margin\_category} (ordinalna, 3 klase): za koliko pobednik vodi,
+    \texttt{low / medium / high};
+    \item \texttt{is\_contested} (binarna): identično \texttt{margin\_category = low}
+    (prag $0.1$).
+\end{itemize}
+
+\texttt{which\_algo} i \texttt{which\_better} odgovaraju na različita pitanja: algoritam koji
+promaši baš optimalan potez, ali izabere drugi najbolji, gubi po \texttt{which\_algo} a može
+pobediti po \texttt{which\_better}. U pretprocesiranju se iz \texttt{which\_algo} izvodi i
+\texttt{tree\_difficulty} (\texttt{Both}->easy, \texttt{AB}/\texttt{MCTS}->medium,
+\texttt{Neither}->hard).
+
+\subsection{Raspodela klasa}
+
+\begin{table}[H]
+\centering
+\caption{Raspodela klasa \texttt{which\_algo} i \texttt{which\_better}}
+\begin{tabular}{lrr@{\hspace{2.5em}}lrr}
+\toprule
+\multicolumn{3}{c}{\texttt{which\_algo}} & \multicolumn{3}{c}{\texttt{which\_better}} \\
+\textbf{Klasa} & \textbf{Broj} & \textbf{Udeo} & \textbf{Klasa} & \textbf{Broj} & \textbf{Udeo} \\
+\midrule
+Both    & 6203 & 36.5\% & AB   & 6330 & 37.3\% \\
+Neither & 5445 & 32.1\% & Tie  & 5684 & 33.5\% \\
+MCTS    & 2756 & 16.2\% & MCTS & 4964 & 29.2\% \\
+AB      & 2574 & 15.2\% &      &      &        \\
+\midrule
+Ukupno  & 16\,978 & 100\% & Ukupno & 16\,978 & 100\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\texttt{which\_algo} je neravnomerno: klasa Both je više od dva puta zastupljenija od AB
+(tabela iznad), jer oba algoritma budu tačna kad god je budžet makar umeren ili je stablo
+strukturno lako. Kod \texttt{which\_better} ta neravnoteža je znatno blaža: sve tri klase su
+reda veličine 30--37\%, iako AB ima blagu prednost nad MCTS-om. Razlog je verovatno to što
+MCTS-ov budžet uključuje i cenu rolauta, pa MCTS pod istim brojem dodirnutih
+čvorova stigne da odigra nešto manje selekcije/ekspanzije nego AB. Uprkos
+tome, \texttt{which\_better} ostaje uravnoteženiji cilj od \texttt{which\_algo}, što je jedan od razloga zašto je
+odabran za glavni cilj klasifikacije.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\textwidth]{../plots/eda/01_class_distribution.png}
+\caption{Raspodela klasa \texttt{which\_algo}}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\textwidth]{../plots/eda/01b_which_better_distribution.png}
+\caption{Raspodela klasa \texttt{which\_better}}
+\end{figure}
+
+MCTS-ova nestabilnost je izmerena direktno: na 64.6\% stabala se svih 5 ponavljanja
+slaže (uvek tačno ili uvek pogrešno), dok na 35.4\% stabala ponavljanja daju različit ishod.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{../plots/eda/03b_mcts_correct_rate.png}
+\caption{Udeo od 5 MCTS ponavljanja koja su pogodila optimum, po stablu}
+\end{figure}
+
+\subsection{Opisna statistika}
+
+Skup ima 16\,978 slogova i 91 atribut: 62 tipa \texttt{float64}, 26 tipa \texttt{int64} i 3
+tekstualna (\texttt{which\_algo}, \texttt{margin\_category}, \texttt{which\_better}). Nema
+nedostajućih vrednosti.
+
+\begin{table}[H]
+\centering
+\caption{Opseg i srednja vrednost parametara generisanja i budžeta}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Atribut} & \textbf{Min} & \textbf{Srednja} & \textbf{Maks} \\
+\midrule
+branching\_factor    & 2    & 8.39  & 14  \\
+depth                & 2    & 3.97  & 10  \\
+chance\_node\_density & 0.0  & 0.38  & 0.9 \\
+heur\_noise\_param    & 0.0  & 0.75  & 1.5 \\
+budget\_coverage     & 2.0\% & 20.5\% & 69.9\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Gustina CHANCE čvorova ima primetnu masu tačno na nuli, namerna posledica, kako bi imali dodatnih 15\%
+potpuno determinističkih stabala koja pogoduju AB-u.
+
+Veličina stabla je izrazito desno zakošena: prosečno 5599 čvorova, ali medijana svega 1472,
+jer broj čvorova raste eksponencijalno sa faktorom grananja, pa nekoliko velikih stabala (do
+51\,771 čvorova) povlači srednju vrednost znatno iznad tipičnog slučaja.
+\texttt{ab\_reach\_depth} (koliko nivoa dubine budžet realno dostiže) prati istu logiku u
+suprotnom smeru: prosečno dostiže tek 2.88 nivoa.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{../plots/eda/04_parameter_distribution.png}
+\caption{Raspodela parametara generisanja i budžeta}
+\end{figure}
+
+%-------------------------------------------------------------------
+\section{Eksplorativna analiza podataka}
+%-------------------------------------------------------------------
+
+\subsection{Atributi po klasama}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../plots/eda/05_feature_boxplots.png}
+\caption{Raspodela šest ključnih atributa po klasi \texttt{which\_algo}}
+\end{figure}
+
+Faktor grananja je najizrazitiji strukturni separator: stabla iz klase Neither imaju u
+proseku najveći faktor grananja (9.28), Both najmanji (7.42), dok AB i MCTS leže između
+njih dvoje i liče jedna na drugu (slika iznad). Gustina CHANCE čvorova pre svega izdvaja
+MCTS, koja je u proseku gušća nego kod preostale tri klase.
+
+\subsection{Korelaciona analiza}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../plots/eda/07_ab_mcts_correlation.png}
+\caption{Pearsonova korelacija numeričkih atributa sa \texttt{ab\_correct} i \texttt{mcts\_correct}}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{../plots/eda/08_correlation_matrix.png}
+\caption{Korelaciona matrica odabranih atributa}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\caption{Najjače Pearsonove korelacije sa \texttt{ab\_correct} i \texttt{mcts\_correct}}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Atribut} & \textbf{ab\_correct} & \textbf{mcts\_correct} \\
+\midrule
+ab\_ranking\_correlation & 0.398  & --     \\
+mcts\_vote\_margin       & 0.286  & 0.441  \\
+branch\_top2\_gap        & 0.257  & --     \\
+ab\_reach\_depth         & 0.179  & 0.357  \\
+depth                    & 0.175  & 0.316  \\
+best\_move\_margin       & 0.240  & --     \\
+branching\_factor        & $-0.175$ & $-0.198$ \\
+mcts\_visit\_entropy     & $-0.265$ & $-0.382$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Za oba cilja, najjača korelacija dolazi od atributa ponašanja algoritama
+(\texttt{ab\_ranking\_correlation}, \texttt{mcts\_vote\_margin}), što je očekivano jer oba
+direktno mere sigurnost algoritma u trenutku odluke, ne samo opštu težinu stabla. Od
+strukturnih atributa, dostupnih pre pokretanja, budžet i margina korena
+(\texttt{branch\_top2\_gap}, \texttt{best\_move\_margin}) pokazuju najjaču pozitivnu vezu, a
+veći faktor grananja ide uz nižu tačnost oba algoritma.
+
+Zanimljivo je da \texttt{ab\_reach\_depth} i \texttt{depth} jako koreliraju i sa
+\texttt{mcts\_correct}, iako direktno mere AB-ov budžet, ne MCTS-ov. Razlog je da veći
+\texttt{depth} u ovom skupu ide uz manji faktor grananja (stabla su ograničena na
+$\approx 30\,000$ čvorova), pa oba algoritma profitiraju od istog, lakšeg tipa stabla.
+\texttt{mcts\_visit\_entropy} je negativno korelisan sa oba cilja: visoka entropija poseta
+(MCTS ravnomerno raspoređuje posete po svoj deci umesto da se skoncentriše na jedno) je
+opštiji signal da je stablo teško, ne samo da je MCTS neodlučan.
+
+\subsection{Vizualizacija u 2D prostoru}
+
+\textbf{PCA.} Primenjena na 68 strukturnih atributa (izuzimajući ciljne kolone i kolone koje
+opisuju ponašanje algoritama). Prve dve komponente objašnjavaju zajedno 34.7\% varijanse
+(PC1: 21.9\%, PC2: 12.8\%),
+a potrebno je 13 komponenti za 80\% varijanse. 
+
+\begin{figure}[H]
+\centering
+\begin{subfigure}[b]{0.54\textwidth}
+    \includegraphics[width=\textwidth]{../plots/eda/09_pca_scatter.png}
+    \caption{PCA rasejani dijagram, obojen po \texttt{which\_algo}}
+\end{subfigure}
+\hfill
+\begin{subfigure}[b]{0.43\textwidth}
+    \includegraphics[width=\textwidth]{../plots/eda/10_pca_variance.png}
+    \caption{Kumulativna objašnjena varijansa}
+\end{subfigure}
+\caption{PCA vizualizacija}
+\end{figure}
+
+Klase nisu linearno razdvojive u 2D projekciji: gotovo 65\% informacije se gubi pri
+svođenju na dve komponente, pa je za pouzdanu klasifikaciju potreban nelinearan model
+(odeljak 5).
+
+\textbf{t-SNE.} Nelinearna vizualizacija na prvih 26 PCA
+komponenti, uzorak od 4000 stabala.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{../plots/eda/11_tsne.png}
+\caption{t-SNE vizualizacija, obojena po \texttt{which\_algo}}
+\end{figure}
+
+t-SNE otkriva lokalne nakupine pretežno jedne klase, ali sa značajnim preklapanjem. Problem je,
+dakle, naučiv iz strukturnih atributa, ali nije trivijalan.
+
+%-------------------------------------------------------------------
+\section{Pretprocesiranje podataka}
+%-------------------------------------------------------------------
+
+\subsection{Izvedeni atributi}
+
+\begin{itemize}[noitemsep]
+    \item \texttt{ab\_coverage} $= \mathtt{ab\_nodes\_visited} / \mathtt{total\_nodes}$:
+    koliko je AB stvarno obišao, za razliku od \texttt{budget\_coverage} koji je
+    \textit{nameravani} budžet. Srednja vrednost 0.201, korelacija sa \texttt{budget\_coverage}
+    0.993 (skoro identične, jer AB retko iscrpi budžet pre nego što dostigne kraj iteracije);
+    \item \texttt{mcts\_unanimous}: da li se svih 5 MCTS ponavljanja slaže (64.6\%, videti
+    odeljak 2.4);
+    \item \texttt{depth\_chance\_inter} $= \mathtt{depth} \times \mathtt{chance\_node\_density}$:
+    jeftina interakcija dve ose generatora;
+    \item \texttt{is\_tie}: \texttt{which\_better = Tie} (5684 od 16\,978, 33.5\%);
+    \item \texttt{tree\_difficulty}: easy/medium/hard izvedeno iz \texttt{which\_algo}
+    (6203 / 5330 / 5445).
+\end{itemize}
+
+Ove poslednje dve, \texttt{ab\_coverage} i \texttt{mcts\_unanimous}, spadaju u atribute
+ponašanja algoritama (odeljak 5.1 ih izbacuje iz skupa B), jer zahtevaju da AB, odnosno MCTS,
+zaista budu
+pokrenuti.
+
+\subsection{Čišćenje podataka}
+
+Skup nema nedostajućih vrednosti. Autlajeri su provereni IQR i $3\sigma$ metodom na šest
+ključnih atributa:
+
+\begin{table}[H]
+\centering
+\caption{Analiza autlajera}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Atribut} & \textbf{IQR autlajeri} & \textbf{\%} & \textbf{$3\sigma$ autlajeri} & \textbf{\%} \\
+\midrule
+total\_nodes       & 1748 & 10.3\% & 364 & 2.1\% \\
+best\_move\_margin & 855  & 5.0\%  & 328 & 1.9\% \\
+mcts\_vote\_margin & 1533 & 9.0\%  & 346 & 2.0\% \\
+heur\_incoherence  & 403  & 2.4\%  & 197 & 1.2\% \\
+leaf\_value\_std   & 66   & 0.4\%  & 68  & 0.4\% \\
+ab\_pruning\_rate  & 2    & 0.0\%  & 11  & 0.1\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Autlajeri se zadržavaju: nisu greške merenja, već realne ali ređe konfiguracije
+stabla (npr. veoma veliko stablo je validan, ne pogrešan, parametar). Njihovo brisanje bi
+uklonilo informaciju relevantnu za klasifikaciju.
+
+\subsection{Kodiranje kategoričkih atributa}
+
+\texttt{margin\_category} i \texttt{tree\_difficulty} su ordinalne i kodiraju se
+\texttt{OrdinalEncoder}-om sa eksplicitnim redosledom (\texttt{low<medium<high},
+\texttt{easy<medium<hard}). \texttt{which\_algo} i \texttt{which\_better} su nominalne i
+kodiraju se \texttt{LabelEncoder}-om: \texttt{which\_algo}
+$-> \{\text{AB}{=}0, \text{Both}{=}1, \text{MCTS}{=}2, \text{Neither}{=}3\}$,
+\texttt{which\_better} $-> \{\text{AB}{=}0, \text{MCTS}{=}1, \text{Tie}{=}2\}$.
+
+\subsection{Standardizacija}
+
+84 numerička prediktorska atributa (sve osim ciljnih/izvedenih kolona) se standardizuju
+\texttt{StandardScaler}-om, $z = (x-\mu)/\sigma$, obavezno pre logističke regresije i
+neuronske mreže. Naučeni scaler se čuva u \texttt{models/scaler.pkl} radi identične
+transformacije na budućim podacima bez ponovnog fitovanja.
+
+\subsection{Izbor podskupa atributa}
+
+Cilj izbora je \texttt{which\_better}. Tri grupe metoda glasaju nezavisno:
+
+\textbf{Filter.} Korelaciona eliminacija ($|r| \geq 0.99$): $84 -> 74$ atributa
+(\texttt{total\_leaves} $\leftrightarrow$ \texttt{total\_nodes} $r{=}0.995$;
+\texttt{leaf\_to\_internal\_ratio} $\leftrightarrow$ \texttt{branching\_factor} $r{=}0.994$;
+\texttt{branching\_mean} $\leftrightarrow$ \texttt{branching\_factor} $r{=}0.994$;
+\texttt{realized\_max\_depth} $\leftrightarrow$ \texttt{depth} $r{=}1.000$;
+\texttt{leaf\_depth\_mean} $\leftrightarrow$ \texttt{depth} $r{=}1.000$;
+\texttt{leaf\_fraction\_positive} $\leftrightarrow$ \texttt{leaf\_value\_mean} $r{=}0.991$;
+\texttt{branching\_mean\_d1} $\leftrightarrow$ \texttt{leaf\_to\_internal\_ratio} $r{=}0.993$;
+\texttt{ab\_nodes\_visited} $\leftrightarrow$ \texttt{node\_budget} $r{=}1.000$;
+\texttt{best\_move\_margin\_normalized} $\leftrightarrow$ \texttt{best\_move\_margin}
+$r{=}0.998$; \texttt{ab\_coverage} $\leftrightarrow$ \texttt{budget\_coverage} $r{=}0.993$).
+Kvazi-konstantni prag (jedna vrednost $>99\%$ redova) ne eliminiše ništa ($74 -> 74$). ANOVA
+F-test (\texttt{SelectKBest}) bira top 37 od 74.
+
+\textbf{Wrapper.} Rekurzivna eliminacija (RFE, logistička regresija) do $74 -> 37$ atributa.
+
+\textbf{Embedded.} Slučajne šume (100 stabala), top 37 po Ginijevoj važnosti.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{../plots/preprocessing/rf_importance.png}
+\caption{Top 20 atributa po važnosti u Slučajnim šumama (izbor atributa)}
+\end{figure}
+
+\textbf{Ansambl glasanje.} Atribut ulazi u finalni skup ako ga izabere bar 2 od 3 grupe:
+
+\begin{table}[H]
+\centering
+\caption{Finalni skup atributa (33 atributa, $\geq 2/3$ glasova)}
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Atribut} & \textbf{ANOVA} & \textbf{RFE} & \textbf{RF} & \textbf{Glasovi} \\
+\midrule
+ab\_depth\_reached       & X & X & X & 3 \\
+ab\_instability          & X & X & X & 3 \\
+ab\_pruning\_rate        & X & X & X & 3 \\
+ab\_ranking\_correlation & X & X & X & 3 \\
+ab\_reach\_depth         & X & X & X & 3 \\
+best\_move\_margin       & X & X & X & 3 \\
+branch\_top2\_gap        & X & X & X & 3 \\
+budget\_coverage         & X & X & X & 3 \\
+depth\_deficit\_rel      & X & X & X & 3 \\
+leaf\_depth\_std         & X & X & X & 3 \\
+mcts\_best\_value\_estimate & X & X & X & 3 \\
+mcts\_unanimous          & X & X & X & 3 \\
+mcts\_visit\_entropy     & X & X & X & 3 \\
+mcts\_vote\_margin       & X & X & X & 3 \\
+node\_budget             & X & X & X & 3 \\
+total\_internal\_nodes   & X & X & X & 3 \\
+total\_nodes             & X & X & X & 3 \\
+ab\_root\_eval\_std      &   & X & X & 2 \\
+branch\_mean\_spread     &   & X & X & 2 \\
+branch\_value\_skew      & X &   & X & 2 \\
+branching\_mean\_d2      & X & X &   & 2 \\
+branching\_mean\_d4      & X & X &   & 2 \\
+depth                    & X & X &   & 2 \\
+depth\_chance\_inter     & X & X &   & 2 \\
+depth\_deficit           &   & X & X & 2 \\
+exact\_second\_best\_value &  & X & X & 2 \\
+heur\_incoherence        & X &   & X & 2 \\
+leaf\_density            &   & X & X & 2 \\
+leaf\_value\_range       & X &   & X & 2 \\
+leaf\_value\_std\_d3     & X & X &   & 2 \\
+leaf\_value\_std\_d5     & X & X &   & 2 \\
+node\_count\_d4          & X & X &   & 2 \\
+total\_min\_nodes        & X &   & X & 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Finalni pretprocesirani skup (\texttt{data/trees\_preprocessed.csv}): 16\,978 slogova, 33
+atributa (\texttt{feat\_A}) plus 16 ciljnih/izvedenih kolona (49 kolona ukupno).
+
+%-------------------------------------------------------------------
+\section{Klasifikacija}
+%-------------------------------------------------------------------
+
+\subsection{Pregled eksperimenta}
+
+Glavni cilj je \texttt{which\_better} (3 klase); sporedni cilj, obrađen paralelno, je
+\texttt{which\_algo} (odeljak 5.6), uz dodatne modele za \texttt{margin\_category} i
+\texttt{tree\_difficulty} (odeljak 5.7) i binarne \texttt{ab\_correct}/\texttt{mcts\_correct}
+(odeljak 5.5).
+
+Eksperiment radimo na tri skupa atributa:
+
+\begin{itemize}[noitemsep]
+    \item \textbf{Skup A (33 atributa):} finalni pretprocesirani skup
+    \item \textbf{Skup B (28 atributa):} samo strukturni atributi, bez ijednog merenja koje
+    zahteva da se AB, MCTS ili orakl zaista pokrenu (\texttt{ab\_nodes\_visited},
+    \texttt{ab\_ranking\_correlation}, \texttt{mcts\_vote\_margin}, \texttt{exact\_best\_value},
+    itd.); \texttt{heur\_incoherence} i \texttt{ab\_reach\_depth} ostaju, jer se računaju iz
+    same strukture. Skup se dobija tako što se iz skupa A ukloni 11 atributa ponašanja
+    algoritama (22 preostala atributa), a zatim mu se vrati 6 dodatnih strukturnih atributa
+    koji nisu prošli izbor u odeljku 4.6 (\texttt{leaf\_to\_internal\_ratio},
+    \texttt{node\_count\_d3}, \texttt{leaf\_value\_std\_d2}, \texttt{chance\_node\_count\_d2},
+    \texttt{total\_max\_nodes}, \texttt{heur\_noise\_param});
+    \item \textbf{Skup C (81 atribut):} svi prediktorski atributi originalnog skupa, bez
+    izbora.
+\end{itemize}
+
+Skup B odgovara na centralno pitanje: \textit{može li se, pre pokretanja ijednog algoritma,
+iz same strukture stabla predvideti čiji će potez biti bolji?} Razlika B$->$A meri vrednost
+merenja ponašanja algoritama; razlika A$->$C meri doprinos izbora atributa.
+
+\textbf{Protokol.} Stratifikovana unakrsna validacija, $k{=}10$. Primarna metrika je
+macro-F1: harmonijska sredina preciznosti i odziva, izračunata posebno za svaku klasu i
+zatim neponderisano usrednjena, tako da model ne može da izgleda dobro samo time što
+pogađa najčešću klasu. Ovo je bitno jer \texttt{which\_algo} ostaje neravnomeran (odeljak
+2.4). Dodatno se prati i ROC AUC (jedan-naspram-ostalih, OvR): meri koliko dobro model
+rangira instance jedne klase iznad ostalih, nezavisno od izabranog praga odlučivanja, gde
+$0.5$ odgovara slučajnom nagađanju, a $1.0$ savršenom razdvajanju.
+
+\textbf{Korišćeni algoritmi.}
+\begin{itemize}[noitemsep]
+    \item \textbf{Stablo odlučivanja (DT):} rekurzivno deli prostor atributa pragovima na
+    pojedinačnim atributima. Lako se vizualizuje i čita direktno (odeljak 5.3), pa služi kao
+    interpretabilna polazna tačka pre složenijih modela.
+    \item \textbf{Slučajne šume (RF, 150 stabala):} ansambl stabala odlučivanja treniranih
+    nad slučajnim poduzorcima podataka i atributa, čije se predikcije usrednjavaju
+    glasanjem. Smanjuje varijansu pojedinačnog stabla i obično daje solidan rezultat bez
+    detaljnog podešavanja hiperparametara.
+    \item \textbf{Logistička regresija (LR):} linearni probabilistički klasifikator.
+    Uključena je kao provera da li linearna granica između klasa uopšte može da objasni
+    razliku.
+    \item \textbf{XGBoost (XGB, 150 stabala):} gradijentno bustovan ansambl stabala, gde
+    svako naredno stablo ispravlja greške prethodnih. Ona u praksi daje još bolje rezultate od prethodnih i predstavlja jači ansambl metod u poređenju.
+    \item \textbf{Neuronska mreža (MLP, jedan skriveni sloj od 64 neurona):} uči nelinearne
+    kombinacije atributa gradijentnim spustom. Testira da li dodatna nelinearnost donosi
+    prednost nad modelima baziranim na stablima.
+    \item \textbf{Metoda potpornih vektora (SVM, RBF kernel, $C{=}1.0$):} traži granicu
+    odlučivanja koja maksimizuje marginu između klasa u (kernelom transformisanom) prostoru
+    atributa.
+    \item \textbf{Slaganje modela (Stacking: DT+RF+XGB $->$ logistička regresija} kombinuje predikcije prethodna tri modela kao ulaz za finalnu logističku
+    regresiju, koja uči kako da ih najbolje izmeša. Ideja je da modeli greše na različitim
+    primerima, pa njihova kombinacija može biti robusnija od bilo kog modela pojedinačno.
+\end{itemize}
+
+\subsection{Rezultati: which\_better}
+
+\begin{table}[H]
+\centering
+\caption{Macro-F1 po modelu i skupu atributa (10-fold, stratifikovano)}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{A (33 atr.)} & \textbf{B (28 atr.)} & \textbf{C (81 atr.)} \\
+\midrule
+Stablo odlučivanja (DT)   & 0.622 & 0.470 & 0.564 \\
+Slučajne šume (RF)        & 0.679 & 0.554 & 0.649 \\
+Logistička regresija (LR) & 0.679 & 0.557 & 0.652 \\
+XGBoost (XGB)              & 0.689 & 0.556 & 0.664 \\
+Neuronska mreža (MLP)      & 0.689 & 0.561 & 0.660 \\
+SVM                        & 0.682 & 0.554 & 0.656 \\
+Slaganje modela (Stacking) & \textbf{0.692} & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Slaganje modela na skupu A postiže najviši macro-F1 (0.692), blago iznad XGBoost-a i MLP-a
+(oba 0.689). Razlike među modelima na skupu A su male, što govori da je informacija u atributima
+već zasićena: izbor modela tu dodaje malo iznad izbora atributa. Pad sa A na B
+(0.679 $->$ 0.554 za RF) je znatan: merenja ponašanja algoritama nose realnu dodatnu
+vrednost, ali skup B sam po sebi, bez pokretanja algoritama, već daje macro-F1 blizu 0.55,
+znatno iznad slučajnog pogađanja za tri klase ($\approx 0.33$).
+
+\begin{table}[H]
+\centering
+\caption{Detaljne mere na skupu A (\texttt{which\_better}, 10-fold)}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Model} & \textbf{Tačnost} & \textbf{macro-F1} & \textbf{Preciznost} & \textbf{Odziv} & \textbf{ROC AUC (OvR)} \\
+\midrule
+DT       & 0.629 & 0.622 & 0.622 & 0.622 & 0.719 \\
+RF       & 0.701 & 0.679 & 0.686 & 0.686 & 0.873 \\
+LR       & 0.697 & 0.679 & 0.683 & 0.684 & 0.870 \\
+XGB      & 0.701 & 0.689 & 0.689 & 0.691 & 0.876 \\
+MLP      & 0.705 & 0.690 & 0.691 & 0.694 & 0.876 \\
+SVM      & 0.706 & 0.682 & 0.692 & 0.691 & 0.872 \\
+Stacking & \textbf{0.707} & \textbf{0.692} & 0.693 & \textbf{0.695} & \textbf{0.876} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../plots/classification/01_confusion_matrices.png}
+\caption{Matrice konfuzije, svi modeli, \texttt{which\_better}, skup A}
+\end{figure}
+
+Kada se klasa Tie u potpunosti isključi (stabla na kojima AB i MCTS biraju potez iste
+vrednosti), problem postaje binarna klasifikacija AB naspram MCTS na preostalih 11\,294
+stabala (66.5\% skupa). Macro-F1 raste kod svih modela, od DT-a ($0.641$) do Stacking-a
+($0.713$), koji ostaje najbolji i ovde. Isključivanje Tie-a, dakle, čini problem lakšim za sve
+modele podjednako, bez promene njihovog relativnog poretka.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../plots/classification/12_confusion_matrices_no_tie.png}
+\caption{Matrice konfuzije, svi modeli, \texttt{which\_better} bez klase Tie, skup A}
+\end{figure}
+
+\subsection{Interpretabilni model: stablo odlučivanja}
+
+Stablo odlučivanja (\texttt{max\_depth=5}) trenirano na skupu B postiže tačnost 0.589 na
+trening skupu i deli koren po \texttt{node\_budget} $\leq 130.5$. Prvi i najvažniji signal je,
+dakle, da li AB uopšte ima dovoljno apsolutnog budžeta na raspolaganju. Drugi po važnosti signal, dalje u
+stablu, je \texttt{branch\_top2\_gap}, strukturna margina između dva najbolja poteza iz
+korena.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../plots/classification/02_decision_tree.png}
+\caption{Stablo odlučivanja (\texttt{max\_depth=5}, skup B, \texttt{which\_better})}
+\end{figure}
+
+\subsection{Važnost atributa}
+
+\begin{table}[H]
+\centering
+\caption{Top 10 atributa po važnosti (skup B, \texttt{which\_better})}
+\begin{tabular}{lr@{\hspace{3em}}lr}
+\toprule
+\multicolumn{2}{c}{\textbf{Slučajne šume (Gini)}} & \multicolumn{2}{c}{\textbf{XGBoost (Gain)}} \\
+\midrule
+branch\_top2\_gap       & 0.093 & node\_budget            & 0.186 \\
+node\_budget            & 0.068 & branch\_top2\_gap       & 0.074 \\
+ab\_reach\_depth        & 0.052 & chance\_node\_count\_d2 & 0.039 \\
+branch\_value\_skew     & 0.050 & ab\_reach\_depth        & 0.037 \\
+branch\_mean\_spread    & 0.047 & budget\_coverage        & 0.034 \\
+heur\_noise\_param      & 0.045 & branch\_mean\_spread    & 0.032 \\
+budget\_coverage        & 0.045 & heur\_noise\_param      & 0.031 \\
+depth\_deficit\_rel     & 0.043 & total\_nodes            & 0.031 \\
+total\_nodes            & 0.041 & total\_internal\_nodes  & 0.031 \\
+heur\_incoherence       & 0.040 & total\_max\_nodes       & 0.030 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Oba modela slažu se da budžet (\texttt{node\_budget}, \texttt{budget\_coverage}) i strukturna
+margina korena (\texttt{branch\_top2\_gap}) čine jezgro najvažnijih atributa, u skladu sa
+stablom odlučivanja iz odeljka 5.3. Slažu se i da je \texttt{ab\_reach\_depth} relevantan, ali XGBoost mu dodeljuje znatno manju težinu u odnosu na sam \texttt{node\_budget}
+(0.186 naspram 0.037), dok Slučajne šume najviše rangiraju \texttt{branch\_top2\_gap} (0.093).
+
+\subsection{Binarna klasifikacija: ab\_correct i mcts\_correct}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.88\textwidth]{../plots/classification/05_roc_curves.png}
+\caption{ROC krive za \texttt{ab\_correct} (levo) i \texttt{mcts\_correct} (desno), RF, skup A naspram skupa B, 5-fold}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\caption{ROC AUC (RF, 5-fold CV, skup A naspram skupa B)}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Cilj} & \textbf{Skup A} & \textbf{Skup B} \\
+\midrule
+\texttt{ab\_correct}   & 0.825 & 0.696 \\
+\texttt{mcts\_correct} & 0.849 & 0.769 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Razlika između skupa A i skupa B je veća za \texttt{ab\_correct} nego za
+\texttt{mcts\_correct} (tabela iznad). Atributi ponašanja algoritama, dakle, nose relativno
+više dodatne informacije o AB-ovoj tačnosti nego o MCTS-ovoj. Ipak, u oba slučaja skup B, koji
+ne sadrži nijedno merenje ponašanja algoritama, sam po sebi nosi znatan signal, daleko iznad
+AUC $= 0.5$ slučajnog modela. Atributi u skupu A (posebno \texttt{mcts\_vote\_margin}
+i \texttt{ab\_ranking\_correlation}) dodaju realnu vrednost kod oba targeta,
+što je očekivano jer ti atributi direktno mere sigurnost algoritma u trenutku odluke.
+
+\subsubsection{SHAP analiza greške AB algoritma}
+
+XGBoost na skupu B, cilj \texttt{ab\_correct}: SHAP (SHapley Additive exPlanations)
+vrednosti su zasnovane na Šeplijevim vrednostima iz teorije kooperativnih igara. Pozitivna vrednost gura predikciju ka \texttt{ab\_correct}
+$=1$ (AB tačan), negativna ka $0$ (AB pogrešan).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../plots/classification/06_shap_ab_correct.png}
+\caption{SHAP analiza za \texttt{ab\_correct} na skupu B (XGBoost)}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\caption{SHAP doprinosi za \texttt{ab\_correct} (skup B, XGBoost)}
+\begin{tabular}{lr@{\hspace{3em}}lr}
+\toprule
+\multicolumn{2}{c}{\textbf{Pozitivan doprinos (AB tačan)}} & \multicolumn{2}{c}{\textbf{Negativan doprinos (AB pogrešan)}} \\
+\midrule
+node\_count\_d3         &  0.091 & branching\_mean\_d2   & $-0.077$ \\
+ab\_reach\_depth        &  0.039 & total\_min\_nodes     & $-0.038$ \\
+branch\_top2\_gap       &  0.039 & total\_internal\_nodes & $-0.034$ \\
+total\_nodes            &  0.035 & leaf\_density         & $-0.018$ \\
+total\_max\_nodes       &  0.032 & depth\_deficit        & $-0.015$ \\
+node\_count\_d4         &  0.020 & node\_budget          & $-0.015$ \\
+heur\_incoherence       &  0.018 & leaf\_value\_std\_d3  & $-0.008$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Najveći pojedinačni doprinos ima \texttt{node\_count\_d3} (pozitivan, broj čvorova na trećem
+nivou dubine) naspram \texttt{branching\_mean\_d2} (negativan, prosečan broj dece po čvoru na
+drugom nivou). Oba su strukturni atributi vezani za oblik stabla blizu korena, ne za budžet
+direktno. \texttt{total\_nodes} doprinosi pozitivno (veći ukupan broj čvorova), a
+\texttt{node\_budget} negativno (manji budžet). Zaključak je da oblik stabla u
+ranim nivoima i budžet zajedno nose najviše signala.
+\texttt{branch\_top2\_gap} (strukturna margina) i \texttt{heur\_incoherence} (kvalitet
+heuristike) potvrđuju istu poruku kao stablo odlučivanja i tabela važnosti.
+
+\subsection{which\_algo naspram which\_better}
+
+\begin{table}[H]
+\centering
+\caption{\texttt{which\_algo} (bez klase Neither), RF/XGB, skup B, 10-fold}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Model} & \textbf{macro-F1} & \textbf{std} \\
+\midrule
+RF  & 0.521 & 0.018 \\
+XGB & 0.528 & 0.014 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Klasa Neither (5445 stabala, 32.1\%) je isključena, jer ta stabla nemaju zajednički
+strukturni potpis, nego samo dodaju šum bez korisnog signala za preostale tri klase. Izveštaj
+po klasi (RF, skup B):
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Klasa} & \textbf{Preciznost} & \textbf{Odziv} & \textbf{F1} & \textbf{Broj} \\
+\midrule
+AB   & 0.61 & 0.52 & 0.56 & 2574 \\
+Both & 0.65 & 0.85 & 0.74 & 6203 \\
+MCTS & 0.43 & 0.19 & 0.27 & 2756 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Poređeno sa glavnim ciljem: \texttt{which\_better} na istom skupu B postiže RF macro-F1
+$= 0.554$, što je iznad RF rezultata za \texttt{which\_algo} bez klase Neither (0.521). Odbacivanje
+klase Neither pomaže, ali ne dovoljno da \texttt{which\_algo} stigne \texttt{which\_better},
+što je dodatna potvrda da je pitanje čiji je potez bolji strukturno čistiji problem od pitanja
+ko je pogodio tačno (odeljak 2.4).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{../plots/classification/09_which_algo_confusion.png}
+\caption{Matrica konfuzije: \texttt{which\_algo} bez Neither (RF, skup B, 10-fold)}
+\end{figure}
+
+Kada se, pored Neither, odbaci i klasa Both (ostaju samo stabla na kojima je tačno jedan od
+dva algoritma pogodio optimum), \texttt{which\_algo} postaje binarna klasifikacija AB naspram
+MCTS. Macro-F1 tada znatno raste: RF $= 0.712 \pm 0.019$, XGB $= 0.689 \pm 0.015$, daleko iznad
+rezultata sa sve tri klase. Izveštaj po klasi (RF, skup B): AB 0.72/0.67/0.69 (2574 slogova),
+MCTS 0.71/0.75/0.73 (2756 slogova), ukupna tačnost 0.71. Najveći deo teškoće u
+\texttt{which\_algo} dolazi, dakle, od razdvajanja Both/Neither od preostalih klasa, a ne od
+razlikovanja same AB-ove i MCTS-ove greške.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{../plots/classification/13_which_algo_ab_vs_mcts.png}
+\caption{Matrica konfuzije: \texttt{which\_algo}, samo AB naspram MCTS (RF, skup B, 10-fold)}
+\end{figure}
+
+\subsection{Ordinalni ciljevi: margin\_category i tree\_difficulty}
+
+Oba se klasifikuju Slučajnim šumama na skupu B, 10-fold CV.
+
+\begin{table}[H]
+\centering
+\caption{\texttt{margin\_category} (RF, skup B, 10-fold), macro-F1 $= 0.53$}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Klasa} & \textbf{Preciznost} & \textbf{Odziv} & \textbf{F1} & \textbf{Broj} \\
+\midrule
+low    & 0.60 & 0.46 & 0.52 & 5842 \\
+medium & 0.53 & 0.70 & 0.61 & 7639 \\
+high   & 0.58 & 0.40 & 0.47 & 3497 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{\texttt{tree\_difficulty} (RF, skup B, 10-fold), macro-F1 $= 0.49$}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Klasa} & \textbf{Preciznost} & \textbf{Odziv} & \textbf{F1} & \textbf{Broj} \\
+\midrule
+easy   & 0.58 & 0.70 & 0.63 & 6203 \\
+medium & 0.41 & 0.32 & 0.36 & 5330 \\
+hard   & 0.50 & 0.49 & 0.49 & 5445 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Oba modela imaju sličan, umeren macro-F1 ($\approx 0.5$): margina i težina stabla su
+delimično predvidive iz strukture, ali daleko od trivijalno. Medium kategorija je
+najteže razdvojiva u oba slučaja, jer po definiciji leži na granici prema oba suseda.
+
+%-------------------------------------------------------------------
+\section{Vizualizacije i generalizacija}
+%-------------------------------------------------------------------
+
+\subsection{Dijagram faza}
+
+Dominantna klasa \texttt{which\_better} u prostoru (\texttt{ab\_reach\_depth} $\times$
+gustina CHANCE čvorova, oba binovana u 6 intervala):
+
+AB dominira ceo nisko-budžetni opseg bez obzira na gustinu CHANCE čvorova, jer MCTS sa
+malim brojem poseta po grani ne stigne da izgradi pouzdanu statistiku. Tie
+dominira ceo visoko budžetni opseg, jer oba algoritma tada uglavnom nađu isti ili blizak
+potez. MCTS izranja kao srednja traka, najizraženija baš pri višoj gustini CHANCE čvorova,
+gde usrednjavanje po slučajnosti otežava AB-ovu plitku heurističku procenu više nego
+MCTS-ovo uzorkovanje.
+
+\subsection{Preciznost rangiranja AB algoritma}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.7\textwidth]{../plots/visualizations/03_ab_ranking.png}
+\caption{Spirmanova korelacija AB-ovog rangiranja poteza po klasi \texttt{which\_algo}}
+\end{figure}
+
+Binarna metrika \texttt{ab\_correct} ne razlikuje algoritam koji bira drugi po kvalitetu
+potez od onog koji bira najgori. Spirmanova korelacija rangova (\texttt{ab\_ranking\_correlation},
+$+1$ = savršeno uređivanje) pokazuje bogatiju sliku po klasi \texttt{which\_algo} kod klasa gde je AB tačan (Both, AB) korelacija je visoka, preko 0.7, dok kod
+klasa gde formalno greši (MCTS, Neither) ostaje pozitivna, samo osetno niža, oko 0.45. AB
+retko pravi katastrofalnu grešku u rangiranju čak i kada formalno pogreši: identifikuje skup
+dobrih poteza, ali ih pogrešno rangira na margini.
+
+\subsection{Generalizacija: predikcija na neviđenom faktoru grananja}
+
+Referentna tačnost, 5-fold CV na celom skupu, skup B: \texttt{which\_algo} macro-F1
+$= 0.402 \pm 0.005$, \texttt{which\_better} macro-F1 $= 0.559 \pm 0.008$.
+
+Stroži test: trening bez svih stabala određenog \texttt{branching\_factor}, test isključivo
+na njima. \texttt{bf}$=7$ leži usred opsega $[2,14]$ (interpolacija), \texttt{bf}$=14$ je
+ivica opsega (ekstrapolacija).
+
+\begin{table}[H]
+\centering
+\caption{Generalizacija na neviđen \texttt{branching\_factor} (RF, skup B)}
+\begin{tabular}{lrrrrrrrr}
+\toprule
+& \multicolumn{2}{c}{\texttt{ab\_correct}} & \multicolumn{2}{c}{\texttt{mcts\_correct}} & \multicolumn{2}{c}{\texttt{which\_algo}} & \multicolumn{2}{c}{\texttt{which\_better}} \\
+\textbf{Scenario} & Tač. & F1 & Tač. & F1 & Tač. & F1 & Tač. & F1 \\
+\midrule
+bf=7 (interpolacija)   & 0.658 & 0.674 & 0.687 & 0.735 & 0.487 & 0.360 & 0.569 & 0.538 \\
+bf=14 (ekstrapolacija) & 0.667 & 0.574 & 0.722 & 0.662 & 0.548 & 0.481 & 0.622 & 0.610 \\
+bf=7 i bf=14 (oba)     & 0.653 & 0.637 & 0.704 & 0.717 & 0.506 & 0.400 & 0.590 & 0.567 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../plots/visualizations/04b_generalization_cm_better.png}
+\caption{\texttt{which\_better}: predikcija iz strukturnih atributa na neviđenim vrednostima \texttt{branching\_factor}}
+\end{figure}
+
+\texttt{which\_better} generalizuje bolje nego \texttt{which\_algo} u oba scenarija (F1
+$0.538$--$0.610$ naspram $0.360$--$0.481$) i ostaje blizu svoje 5-fold reference ($0.559$).
+\texttt{which\_algo} pada ispod svoje reference ($0.402 -> 0.360$) baš na
+interpolisanom \texttt{bf}$=7$, što je neobično: tačnost (0.487) ostaje razumna, ali F1
+pada, jer model na tom specifičnom \texttt{bf} sistematski favorizuje većinsku klasu
+Both na štetu ređih AB/MCTS predikcija. Kod ekstrapolacije na
+\texttt{bf}$=14$ (ivica opsega), \texttt{which\_algo} F1 zapravo raste na $0.481$. Na
+najvećim stablima je klasa Neither dominantnija i lakše prepoznatljiva, što
+delimično kompenzuje otežanu ekstrapolaciju. Zajednička poruka: model ne uči trik vezan za
+konkretnu vrednost \texttt{branching\_factor} (rezultati na neviđenom \texttt{bf} ne
+odudaraju previše), ali apsolutni nivo tačnosti zavisi od toga koja mešavina klasa dominira na tom
+delu opsega.
+
+\subsection{Šta čini stablo teškim}
+
+Klasa Neither (nijedan algoritam nije tačan) posebno se analizira binarnom
+klasifikacijom Neither naspram ostalih (XGBoost, skup B), sa SHAP analizom važnosti.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.95\textwidth]{../plots/visualizations/06_hard_tree_shap.png}
+\caption{SHAP: prediktori teškog stabla (Neither naspram ostalih) i doprinos po dubini}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\caption{Top 10 prediktora teškog stabla (SHAP, skup B)}
+\begin{tabular}{lr}
+\toprule
+\textbf{Atribut} & \textbf{mean(|SHAP|)} \\
+\midrule
+branch\_top2\_gap       & 0.541 \\
+ab\_reach\_depth        & 0.446 \\
+branch\_mean\_spread    & 0.385 \\
+branch\_value\_skew     & 0.312 \\
+chance\_frac\_top1      & 0.285 \\
+chance\_node\_count\_d1 & 0.203 \\
+node\_budget            & 0.175 \\
+top2\_size\_ratio       & 0.174 \\
+budget\_coverage        & 0.173 \\
+heur\_incoherence       & 0.169 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\texttt{branch\_top2\_gap} je najvažniji, ali tesno praćen sa \texttt{ab\_reach\_depth}
+(0.54 naspram 0.45): strukturna margina korena i realno dostupan budžet su, dakle,
+podjednako jaki prediktori teškog stabla. Teška stabla su pre svega ona gde su prva dva
+poteza iz korena vrednosno gotovo izjednačena i/ili gde AB nema dovoljno budžeta da dosegne
+razumnu dubinu. Ostatak top deset atributa (\texttt{branch\_mean\_spread},
+\texttt{branch\_value\_skew}, \texttt{chance\_frac\_top1}, \texttt{top2\_size\_ratio}) dodatno
+opisuje oblik i asimetriju grana iz korena, dok \texttt{node\_budget},
+\texttt{budget\_coverage} i \texttt{heur\_incoherence} potvrđuju da su budžet i kvalitet
+heuristike nezavisni dobri prediktori. Jedini atribut vezan striktno za prvi nivo dubine koji
+ostaje u top deset je \texttt{chance\_node\_count\_d1}.
+
+%-------------------------------------------------------------------
+\section{Zaključak}
+%-------------------------------------------------------------------
+
+\subsection{Sažetak nalaza}
+
+\textbf{Nalaz 1.} Budžet dominira nad sirovom veličinom stabla, pritom modeli se ne slažu da li
+ga koriste u sirovom ili normalizovanom obliku. Stablo odlučivanja deli koren
+direktno po \texttt{node\_budget}, a XGBoost mu dodeljuje ubedljivo najveću
+važnost. Slučajne šume, s druge strane, i dalje najviše teže strukturnoj margini
+\texttt{branch\_top2\_gap}, sa logaritamski izvedenim \texttt{ab\_reach\_depth} (koliko nivoa
+dubine budžet realno pokriva s obzirom na faktor grananja) tek na trećem mestu. Oba modela se
+slažu da je budžet centralni signal, samo se razlikuju u tome kroz koji oblik ga najbolje
+koriste.
+
+\textbf{Nalaz 2.} Margina korena je nezavisan, podjednako jak izvor informacija.
+\texttt{branch\_top2\_gap} (razlika između prva dva poteza iz korena, računata bez pokretanja
+ijednog algoritma) je najvažniji pojedinačni prediktor kod Slučajnih šuma za
+\texttt{which\_better} i ubedljivo najvažniji u SHAP analizi za to da li je stablo uopšte
+teško rešivo (odeljak 6.4). 
+
+\textbf{Nalaz 3.} \texttt{which\_better} je strukturno čistiji cilj od \texttt{which\_algo}.
+Na istom skupu strukturnih atributa (B), \texttt{which\_better} dosledno nadmašuje
+\texttt{which\_algo} (0.554 naspram 0.521 macro-F1, odeljak 5.6), bolje generalizuje na
+neviđene vrednosti faktora grananja (odeljak 6.3) i ima uravnoteženiju raspodelu klasa
+(odeljak 2.4). Razlog je strukturan, \texttt{which\_algo} meša koliko
+je algoritam dobar sa koliko je stablo teško uopšte (klasa Both dominira kad god je
+bilo koji uslov ispunjen), dok \texttt{which\_better} to razdvaja.
+
+\textbf{Nalaz 4.} Struktura stabla je dovoljna za merljiv, ali ne potpun skup informacija. Skup B (28 atributa, isključivo strukturni) postiže macro-F1
+$= 0.554$ za \texttt{which\_better}, daleko iznad slučajnog pogađanja ($\approx 0.33$) ali
+nešto ispod skupa A koji uključuje merenja ponašanja algoritama (0.679). Ovi atributi
+(posebno \texttt{mcts\_vote\_margin}, \texttt{ab\_ranking\_correlation}) nose
+stvarnu dodatnu vrednost, ali ne menjaju koji tip strukture je bitan.
+
+\subsection{Ograničenja}
+
+Stabla su sintetička i kontrolisanog oblika, realna stabla igara (šah, Catan) imaju bogatiju
+strukturu i specifične evaluacione funkcije, pa generalizabilnost nalaza na stvarne
+igre nije eksperimentalno proverena. Iscrpni minimax kao izvor istine nije primenjiv na igre
+sa milijardama čvorova, pa bi na takvim igrama selekcija algoritma morala da se osloni na
+aproksimativan algoritam. 
+
+\end{document}
