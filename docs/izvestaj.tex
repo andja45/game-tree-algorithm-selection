@@ -31,7 +31,7 @@
 \title{
     \textbf{Selekcija algoritma pretrage stabla igre}\\[0.4em]
     \large Istraživanje podataka 2: Seminarski rad\\[0.3em]
-    \normalsize Primena klasifikacije na problem selekcije algoritma (Rice, 1976)
+    \normalsize Primena klasifikacije na problem selekcije algoritma
 }
 \author{Anđela Spasić}
 \date{Matematički fakultet, Univerzitet u Beogradu\\2025/2026}
@@ -156,8 +156,7 @@ Skup ima 91 kolonu: 81 prediktorski atribut i 10 ciljnih/izvedenih promenljivih
 (\texttt{which\_algo}, \texttt{which\_better}, \texttt{margin\_category}, \texttt{ab\_correct},
 \texttt{mcts\_correct}, \texttt{mcts\_correct\_rate}, \texttt{is\_contested}, \texttt{delta},
 \texttt{ab\_regret}, \texttt{mcts\_regret}). Prediktorski atributi se dele u sedam grupa, prema
-tome da li se mogu izračunati iz same strukture stabla ili zahtevaju da neki algoritam
-(AB, MCTS ili orakl) zaista bude pokrenut:
+tome da li se mogu izračunati iz same strukture stabla ili zahtevaju da neki algoritam zaista bude pokrenut:
 
 \begin{itemize}[noitemsep]
     \item \textbf{Parametri generisanja (4):} \texttt{branching\_factor}, \texttt{depth},
@@ -529,7 +528,6 @@ F-test (\texttt{SelectKBest}) bira top 37 od 74.
 ab\_depth\_reached       & X & X & X & 3 \\
 ab\_instability          & X & X & X & 3 \\
 ab\_pruning\_rate        & X & X & X & 3 \\
-ab\_ranking\_correlation & X & X & X & 3 \\
 ab\_reach\_depth         & X & X & X & 3 \\
 best\_move\_margin       & X & X & X & 3 \\
 branch\_top2\_gap        & X & X & X & 3 \\
@@ -582,8 +580,8 @@ Eksperiment radimo na tri skupa atributa:
 \begin{itemize}[noitemsep]
     \item \textbf{Skup A (33 atributa):} finalni pretprocesirani skup
     \item \textbf{Skup B (28 atributa):} samo strukturni atributi, bez ijednog merenja koje
-    zahteva da se AB, MCTS ili orakl zaista pokrenu (\texttt{ab\_nodes\_visited},
-    \texttt{ab\_ranking\_correlation}, \texttt{mcts\_vote\_margin}, \texttt{exact\_best\_value},
+    zahteva da se algoritmi zaista pokrenu (\texttt{ab\_nodes\_visited},
+    \texttt{mcts\_vote\_margin},
     itd.); \texttt{heur\_incoherence} i \texttt{ab\_reach\_depth} ostaju, jer se računaju iz
     same strukture. Skup se dobija tako što se iz skupa A ukloni 11 atributa ponašanja
     algoritama (22 preostala atributa), a zatim mu se vrati 6 dodatnih strukturnih atributa
@@ -731,8 +729,8 @@ heur\_incoherence       & 0.040 & total\_max\_nodes       & 0.030 \\
 \end{tabular}
 \end{table}
 
-Oba modela slažu se da budžet (\texttt{node\_budget}, \texttt{budget\_coverage}) i strukturna
-margina korena (\texttt{branch\_top2\_gap}) čine jezgro najvažnijih atributa, u skladu sa
+Oba modela slažu se da su budžet (\texttt{node\_budget}, \texttt{budget\_coverage}) i strukturna
+margina korena (\texttt{branch\_top2\_gap}) najvažniji atributi, u skladu sa
 stablom odlučivanja iz odeljka 5.3. Slažu se i da je \texttt{ab\_reach\_depth} relevantan, ali XGBoost mu dodeljuje znatno manju težinu u odnosu na sam \texttt{node\_budget}
 (0.186 naspram 0.037), dok Slučajne šume najviše rangiraju \texttt{branch\_top2\_gap} (0.093).
 
@@ -751,18 +749,17 @@ stablom odlučivanja iz odeljka 5.3. Slažu se i da je \texttt{ab\_reach\_depth}
 \toprule
 \textbf{Cilj} & \textbf{Skup A} & \textbf{Skup B} \\
 \midrule
-\texttt{ab\_correct}   & 0.825 & 0.696 \\
-\texttt{mcts\_correct} & 0.849 & 0.769 \\
+\texttt{ab\_correct}   & 0.739 & 0.696 \\
+\texttt{mcts\_correct} & 0.833 & 0.769 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Razlika između skupa A i skupa B je veća za \texttt{ab\_correct} nego za
+Razlika između skupa A i skupa B je malo veća za \texttt{mcts\_correct} nego za
 \texttt{mcts\_correct} (tabela iznad). Atributi ponašanja algoritama, dakle, nose relativno
 više dodatne informacije o AB-ovoj tačnosti nego o MCTS-ovoj. Ipak, u oba slučaja skup B, koji
 ne sadrži nijedno merenje ponašanja algoritama, sam po sebi nosi znatan signal, daleko iznad
-AUC $= 0.5$ slučajnog modela. Atributi u skupu A (posebno \texttt{mcts\_vote\_margin}
-i \texttt{ab\_ranking\_correlation}) dodaju realnu vrednost kod oba targeta,
+AUC $= 0.5$ slučajnog modela. Atributi u skupu A (posebno \texttt{mcts\_vote\_margin}) dodaju realnu vrednost kod oba targeta,
 što je očekivano jer ti atributi direktno mere sigurnost algoritma u trenutku odluke.
 
 \subsubsection{SHAP analiza greške AB algoritma}
@@ -895,7 +892,7 @@ hard   & 0.50 & 0.49 & 0.49 & 5445 \\
 \end{table}
 
 Oba modela imaju sličan, umeren macro-F1 ($\approx 0.5$): margina i težina stabla su
-delimično predvidive iz strukture, ali daleko od trivijalno. Medium kategorija je
+delimično predvidive iz strukture. Medium kategorija je
 najteže razdvojiva u oba slučaja, jer po definiciji leži na granici prema oba suseda.
 
 %-------------------------------------------------------------------
@@ -1012,8 +1009,7 @@ razumnu dubinu. Ostatak top deset atributa (\texttt{branch\_mean\_spread},
 \texttt{branch\_value\_skew}, \texttt{chance\_frac\_top1}, \texttt{top2\_size\_ratio}) dodatno
 opisuje oblik i asimetriju grana iz korena, dok \texttt{node\_budget},
 \texttt{budget\_coverage} i \texttt{heur\_incoherence} potvrđuju da su budžet i kvalitet
-heuristike nezavisni dobri prediktori. Jedini atribut vezan striktno za prvi nivo dubine koji
-ostaje u top deset je \texttt{chance\_node\_count\_d1}.
+heuristike nezavisni dobri prediktori.
 
 %-------------------------------------------------------------------
 \section{Zaključak}
@@ -1047,15 +1043,16 @@ bilo koji uslov ispunjen), dok \texttt{which\_better} to razdvaja.
 \textbf{Nalaz 4.} Struktura stabla je dovoljna za merljiv, ali ne potpun skup informacija. Skup B (28 atributa, isključivo strukturni) postiže macro-F1
 $= 0.554$ za \texttt{which\_better}, daleko iznad slučajnog pogađanja ($\approx 0.33$) ali
 nešto ispod skupa A koji uključuje merenja ponašanja algoritama (0.679). Ovi atributi
-(posebno \texttt{mcts\_vote\_margin}, \texttt{ab\_ranking\_correlation}) nose
+(posebno \texttt{mcts\_vote\_margin}) nose
 stvarnu dodatnu vrednost, ali ne menjaju koji tip strukture je bitan.
 
 \subsection{Ograničenja}
 
-Stabla su sintetička i kontrolisanog oblika, realna stabla igara (šah, Catan) imaju bogatiju
-strukturu i specifične evaluacione funkcije, pa generalizabilnost nalaza na stvarne
-igre nije eksperimentalno proverena. Iscrpni minimax kao izvor istine nije primenjiv na igre
+Stabla su sintetička i kontrolisanog oblika, realna stabla igara imaju bogatiju
+strukturu i specifične evaluacione funkcije, pa nalazi na stvarnim
+igrama nisu eksperimentalno proverena. Iscrpni minimax kao izvor istine nije primenjiv na igre
 sa milijardama čvorova, pa bi na takvim igrama selekcija algoritma morala da se osloni na
-aproksimativan algoritam. 
+aproksimativan algoritam. Međutim, svrha ovog projekta i jeste bila kontrolisanje strukture stabla
+radi raznovrsnosti skupa podataka, i kasnija validacija na neviđenim stablima.
 
 \end{document}
